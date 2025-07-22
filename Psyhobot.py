@@ -2,11 +2,7 @@ import json
 import os
 import matplotlib.pyplot as plt
 from datetime import datetime
-from telegram import (
-    Update,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
-)
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -15,10 +11,14 @@ from telegram.ext import (
     ContextTypes,
     filters,
 )
+from dotenv import load_dotenv
+
+# Загрузка переменных из .env
+load_dotenv()
 
 USER_DATA_FILE = "user_data.json"
 
-# Загрузка и сохранение
+# Загрузка и сохранение данных пользователя
 def load_user_data():
     try:
         with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
@@ -46,14 +46,13 @@ scores = {"Никогда": 0, "Несколько дней": 1, "Более п�
 
 user_answers = {}
 
-# Старт
+# Команды
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_data = load_user_data()
     name = user_data.get(str(user_id), {}).get("name", "друг")
     await update.message.reply_text(f"Привет, {name}! Я твой личный психолог-бот. Чем могу помочь?")
 
-# Помощь
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Вот что я могу сделать:\n"
@@ -65,7 +64,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "- Начать диагностику: /diagnosis"
     )
 
-# Установка имени
 async def set_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     name = " ".join(context.args)
@@ -80,13 +78,12 @@ async def set_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Пожалуйста, укажи своё имя после команды, например: /setname Иван")
 
-# Начать диагностику
 async def start_diagnosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_answers[user_id] = []
     await ask_question(update, context, user_id, 0)
 
-# Задать вопрос
+# Вопросы и ответы
 async def ask_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, question_number: int):
     if question_number < len(questions):
         question = questions[question_number]
@@ -102,15 +99,13 @@ async def ask_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
     else:
         await evaluate_answers(update, context, user_id)
 
-# Обработка нажатия кнопки
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data_parts = query.data.split("_")
     user_id = int(data_parts[1])
     question_number = int(data_parts[2])
-    answer = "_".join(data_parts[3:])  # поддержка вариантов с "_"
-
+    answer = "_".join(data_parts[3:])
     user_answers[user_id].append(answer)
 
     if question_number + 1 < len(questions):
@@ -147,7 +142,7 @@ async def evaluate_answers(update: Update, context: ContextTypes.DEFAULT_TYPE, u
     )
     await context.bot.send_photo(chat_id=update.effective_chat.id, photo=open(f"progress_{user_id}.png", "rb"))
 
-# Генерация графика
+# График
 async def generate_progress_graph(user_id: int, history: list):
     scores = [entry["score"] for entry in history]
     dates = [entry["date"] for entry in history]
@@ -163,9 +158,12 @@ async def generate_progress_graph(user_id: int, history: list):
     plt.savefig(f"progress_{user_id}.png")
     plt.close()
 
-# Главная функция запуска
+# Запуск
 def main():
-    token = os.getenv("TELEGRAM_BOT_TOKEN")  # Установи переменную окружения
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+
+    if not token:
+        raise ValueError("Переменная TELEGRAM_BOT_TOKEN не найдена. Убедись, что файл .env создан и заполнен.")
 
     application = ApplicationBuilder().token(token).build()
 
