@@ -290,4 +290,4 @@ async def helpme(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    if text == "📝"
+    if text == """📝"""
