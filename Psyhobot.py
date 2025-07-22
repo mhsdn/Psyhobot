@@ -14,6 +14,10 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
 )
+from dotenv import load_dotenv  # добавляем импорт для dotenv
+
+# Загружаем переменные окружения из .env
+load_dotenv()
 
 # Настройка логирования
 logging.basicConfig(
@@ -155,11 +159,11 @@ async def evaluate_answers(update: Update, context: ContextTypes.DEFAULT_TYPE, u
 
 # Создание графика прогресса
 async def generate_progress_graph(user_id: int, history: list):
-    scores = [entry["score"] for entry in history]
+    scores_list = [entry["score"] for entry in history]
     dates = [entry["date"] for entry in history]
 
     plt.figure(figsize=(8, 6))
-    plt.plot(dates, scores, marker='o', linestyle='-', color='blue')
+    plt.plot(dates, scores_list, marker='o', linestyle='-', color='blue')
     plt.title(f"Прогресс пользователя {user_id}")
     plt.xlabel("Дата")
     plt.ylabel("Баллы")
@@ -171,7 +175,11 @@ async def generate_progress_graph(user_id: int, history: list):
 
 # Главная функция запуска бота
 def main():
-    token = os.getenv("TELEGRAM_BOT_TOKEN")  # Твой токен должен быть в переменных окружения
+    token = os.getenv("TELEGRAM_BOT_TOKEN")  # Токен загружается из .env
+
+    if not token:
+        logger.error("Токен бота не найден! Пожалуйста, укажите TELEGRAM_BOT_TOKEN в .env файле.")
+        return
 
     application = ApplicationBuilder().token(token).build()
 
