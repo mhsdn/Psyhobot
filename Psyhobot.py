@@ -314,10 +314,7 @@ async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Запуск приложения ---
 def main():
-    print("TOKEN:", repr(TOKEN))
-    if not TOKEN or not TOKEN.startswith("1") or ":" not in TOKEN:
-        raise ValueError("❌ Токен не загружен или имеет неправильный формат!")
-
+    
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
