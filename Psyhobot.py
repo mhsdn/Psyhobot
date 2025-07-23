@@ -2,8 +2,9 @@ import json
 import os
 import logging
 import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
+from datetime import datetime
 from dotenv import load_dotenv
+import random
 
 from telegram import (
     Update,
@@ -21,7 +22,7 @@ from telegram.ext import (
     filters,
 )
 
-# Загружаем переменные окружения из .env
+# Загрузка .env переменных
 load_dotenv()
 
 # Настройка логирования
@@ -29,10 +30,25 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
-logger = logging.getLogger(__name__)
 
+TOKEN = os.getenv("TELEGRAM_TOKEN")
 USER_DATA_FILE = "user_data.json"
 
+# --- Данные и словари ---
+questions = [
+    "Как часто вы испытываете мало интереса или удовольствия от занятий, которые обычно доставляют радость?",
+    "Как часто вы чувствуете себя усталым или без сил?",
+    "Как часто вам трудно засыпать или слишком рано просыпаться?",
+    "Как часто вы ощущаете, что всё в жизни теряет смысл?",
+    "Как часто вы чувствуете себя нервным или беспокойным?",
+    "Как часто вы чувствуете себя беспомощным или одиноким?"
+]
+
+answer_options = ["Никогда", "Несколько дней", "Более половины времени", "Практически каждый день"]
+scores_map = {"Никогда": 0, "Несколько дней": 1, "Более половины времени": 2, "Практически каждый день": 3}
+user_answers = {}
+
+# --- Работа с файлами пользователя ---
 def load_user_data():
     try:
         with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
@@ -44,24 +60,7 @@ def save_user_data(data):
     with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# Вопросы и варианты ответов для диагностики
-questions = [
-    "Как часто вы испытываете мало интереса или удовольствия от занятий, которые обычно доставляют радость?",
-    "Как часто вы чувствуете себя усталым или без сил?",
-    "Как часто вам трудно засыпать или слишком рано просыпаться?",
-    "Как часто вы ощущаете, что всё в жизни теряет смысл?",
-    "Как часто вы чувствуете себя нервным или беспокойным?",
-    "Как часто вы чувствуете себя беспомощным или одиноким?"
-]
-
-answer_options = ["Никогда", "Несколько дней", "Более половины времени", "Практически каждый день"]
-
-scores_map = {"Никогда": 0, "Несколько дней": 1, "Более половины времени": 2, "Практически каждый день": 3}
-
-user_answers = {}
-
-# --- Функции обработки команд и логики ---
-
+# --- Команды ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_data = load_user_data()
@@ -83,35 +82,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Вот что я могу сделать:\n"
-        "- Провести экспресс-диагностику состояния\n"
-        "- Отслеживать твой прогресс\n"
-        "- Сохранять твои баллы\n"
-        "- Показывать график изменений\n"
-        "- Вести дневник настроения\n"
-        "- Подсказывать техники релаксации\n"
-        "- Мотивировать цитатами\n"
-        "- Устанавливать напоминания\n"
-        "- Устанавливать имя: /setname Иван\n"
-        "- Начать диагностику: /diagnosis\n\n"
-        "Или воспользуйся меню кнопок."
+        "- /setname Иван — установить имя\n"
+        "- /diagnosis — начать диагностику\n"
+        "- /reminder 5 Пить воду — напоминание\n"
+        "- Просто напиши, чтобы добавить в дневник настроения"
     )
 
 async def set_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     name = " ".join(context.args)
+    if not name:
+        await update.message.reply_text("Укажи имя после команды: /setname Иван")
+        return
 
-    if name:
-        user_data = load_user_data()
-        if str(user_id) not in user_data:
-            user_data[str(user_id)] = {}
-        user_data[str(user_id)]["name"] = name
-        save_user_data(user_data)
-        await update.message.reply_text(f"Приятно познакомиться, {name}!")
-    else:
-        await update.message.reply_text("Пожалуйста, укажи своё имя после команды, например: /setname Иван")
+    user_data = load_user_data()
+    user_data.setdefault(str(user_id), {})["name"] = name
+    save_user_data(user_data)
+    await update.message.reply_text(f"Приятно познакомиться, {name}!")
 
 # --- Диагностика ---
-
 async def start_diagnosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_answers[user_id] = []
@@ -119,26 +108,26 @@ async def start_diagnosis(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def ask_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, question_number: int):
     if question_number < len(questions):
-        question = questions[question_number]
         keyboard = [
-            [InlineKeyboardButton(option, callback_data=f"answer_{user_id}_{question_number}_{option}")]
-            for option in answer_options
+            [InlineKeyboardButton(opt, callback_data=f"answer_{user_id}_{question_number}_{opt}")]
+            for opt in answer_options
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        markup = InlineKeyboardMarkup(keyboard)
+        question = questions[question_number]
         if update.message:
-            await update.message.reply_text(question, reply_markup=reply_markup)
+            await update.message.reply_text(question, reply_markup=markup)
         elif update.callback_query:
-            await update.callback_query.message.reply_text(question, reply_markup=reply_markup)
+            await update.callback_query.message.reply_text(question, reply_markup=markup)
     else:
         await evaluate_answers(update, context, user_id)
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    data_parts = query.data.split("_")
-    user_id = int(data_parts[1])
-    question_number = int(data_parts[2])
-    answer = "_".join(data_parts[3:])
+    _, uid, qn, *ans_parts = query.data.split("_")
+    user_id = int(uid)
+    question_number = int(qn)
+    answer = "_".join(ans_parts)
 
     user_answers[user_id].append(answer)
 
@@ -148,98 +137,85 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await evaluate_answers(update, context, user_id)
 
 async def evaluate_answers(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    total_score = sum(scores_map[answer] for answer in user_answers[user_id])
-
-    if total_score <= 5:
+    total = sum(scores_map[a] for a in user_answers[user_id])
+    if total <= 5:
         result = "Ваше состояние в порядке."
-    elif 6 <= total_score <= 10:
+    elif total <= 10:
         result = "Есть признаки стресса. Попробуйте отдохнуть."
-    elif 11 <= total_score <= 15:
+    elif total <= 15:
         result = "Возможно умеренная депрессия. Подумайте о разговоре с психологом."
     else:
-        result = "Вы можете испытывать тяжёлую депрессию. Рекомендуется обратиться за помощью."
+        result = "Вы можете испытывать тяжёлую депрессию. Обратитесь за помощью."
 
     user_data = load_user_data()
     history = user_data.get(str(user_id), {}).get("history", [])
-    history.append({
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "score": total_score
-    })
+    history.append({"date": datetime.now().strftime("%Y-%m-%d %H:%M"), "score": total})
     user_data[str(user_id)] = {"history": history, **user_data.get(str(user_id), {})}
     save_user_data(user_data)
 
     await generate_progress_graph(user_id, history)
 
     await update.callback_query.message.edit_text(
-        f"Ваши результаты:\n\nОбщий балл: {total_score}\n\n{result}\n\nВот ваш прогресс:"
+        f"Ваш результат: {total}\n\n{result}\n\nВот ваш прогресс:"
     )
     await context.bot.send_photo(chat_id=update.effective_chat.id, photo=open(f"progress_{user_id}.png", "rb"))
 
-async def generate_progress_graph(user_id: int, history: list):
-    scores = [entry["score"] for entry in history]
+async def generate_progress_graph(user_id, history):
     dates = [entry["date"] for entry in history]
+    scores = [entry["score"] for entry in history]
 
     plt.figure(figsize=(8, 6))
-    plt.plot(dates, scores, marker='o', linestyle='-', color='blue')
-    plt.title(f"Прогресс пользователя {user_id}")
+    plt.plot(dates, scores, marker='o', color='blue')
+    plt.title("Прогресс состояния")
     plt.xlabel("Дата")
     plt.ylabel("Баллы")
     plt.xticks(rotation=45)
-    plt.grid(True)
     plt.tight_layout()
+    plt.grid(True)
     plt.savefig(f"progress_{user_id}.png")
     plt.close()
 
-# --- Дневник настроения ---
-
+# --- Дневник ---
 async def mood_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Пожалуйста, опишите, как вы себя чувствуете сегодня.")
+    await update.message.reply_text("Опиши, как ты себя чувствуешь.")
 
 async def mood_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    mood_text = update.message.text
+    text = update.message.text
 
     user_data = load_user_data()
     mood_history = user_data.get(str(user_id), {}).get("mood_history", [])
-    mood_history.append({
-        "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "mood": mood_text
-    })
+    mood_history.append({"date": datetime.now().strftime("%Y-%m-%d %H:%M"), "mood": text})
     user_data[str(user_id)] = {"mood_history": mood_history, **user_data.get(str(user_id), {})}
     save_user_data(user_data)
 
-    await update.message.reply_text("Спасибо, ваш дневник настроения обновлен!")
+    await update.message.reply_text("Спасибо! Запись добавлена в дневник настроения.")
 
 # --- Релаксация ---
-
 relax_text = (
     "Техника релаксации:\n"
     "1. Найдите спокойное место.\n"
     "2. Закройте глаза и глубоко вдохните.\n"
-    "3. Медленно выдыхайте, расслабляя мышцы.\n"
-    "4. Повторите несколько раз.\n"
-    "5. Попробуйте сосредоточиться на ощущениях тела."
+    "3. Медленно выдохните, расслабляя тело.\n"
+    "4. Повторите 5 раз.\n"
+    "5. Почувствуйте спокойствие."
 )
 
 async def relax(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(relax_text)
 
 # --- Цитаты ---
-
 quotes = [
-    "Жизнь — это 10% того, что с вами происходит, и 90% того, как вы на это реагируете. — Чарльз Р. Свиндолл",
-    "Счастье не в том, чтобы иметь всё, а в умении радоваться тому, что есть. — Конфуций",
-    "Не бойтесь идти медленно, бойтесь стоять на месте.",
-    "Каждый день — новый шанс изменить свою жизнь."
+    "Счастье — это когда то, что ты думаешь, говоришь и делаешь — в гармонии. — Махатма Ганди",
+    "Ты сильнее, чем тебе кажется.",
+    "Каждый день — шанс начать заново.",
+    "Ты — главный герой своей жизни, а не жертва."
 ]
-
-import random
 
 async def quote(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(random.choice(quotes))
 
 # --- Напоминания ---
-
 async def reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if len(args) < 2:
@@ -247,47 +223,79 @@ async def reminder(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     try:
         minutes = int(args[0])
-        message = " ".join(args[1:])
-        await update.message.reply_text(f"Напоминание установлено через {minutes} минут.")
+        msg = " ".join(args[1:])
+        await update.message.reply_text(f"Напоминание установлено через {minutes} мин.")
+        context.job_queue.run_once(reminder_callback, minutes * 60, data=(update.effective_chat.id, msg))
     except ValueError:
-        await update.message.reply_text("Пожалуйста, укажите время в минутах (целым числом).")
-        return
-
-    # Отложенный вызов через job queue
-    context.job_queue.run_once(reminder_callback, minutes * 60, data=(update.effective_chat.id, message))
+        await update.message.reply_text("Пожалуйста, укажите целое число минут.")
 
 async def reminder_callback(context: ContextTypes.DEFAULT_TYPE):
-    chat_id, message = context.job.data
-    await context.bot.send_message(chat_id=chat_id, text=f"Напоминание: {message}")
+    chat_id, msg = context.job.data
+    await context.bot.send_message(chat_id=chat_id, text=f"🔔 Напоминание: {msg}")
 
 # --- FAQ ---
-
 faq_text = (
     "Часто задаваемые вопросы:\n"
     "1. Как установить имя? /setname Иван\n"
     "2. Как начать диагностику? /diagnosis\n"
-    "3. Как вести дневник настроения? Просто напишите его после выбора меню.\n"
-    "4. Как установить напоминание? /reminder <минуты> <сообщение>"
+    "3. Как вести дневник? Просто напишите текст.\n"
+    "4. Как установить напоминание? /reminder 10 Пить воду"
 )
 
 async def faq(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(faq_text)
 
 # --- Экстренная помощь ---
-
 help_text = (
-    "Если вам нужна экстренная помощь, обратитесь по этим номерам:\n"
-    "Телефон доверия: 8-800-2000-122\n"
-    "Психологическая помощь: 112\n"
-    "В критической ситуации звоните 103."
+    "🚨 Экстренная помощь:\n"
+    "📞 Телефон доверия: 8-800-2000-122\n"
+    "📞 Психологическая помощь: 112\n"
+    "📞 В экстренных случаях звоните: 103"
 )
 
 async def helpme(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(help_text)
 
-# --- Обработка выбора из меню ---
-
+# --- Меню кнопок ---
 async def menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    if text == """📝""":
+    if text == "📝 Диагностика":
+        await start_diagnosis(update, context)
+    elif text == "📔 Дневник настроения":
+        await mood_start(update, context)
+    elif text == "🧘‍♂️ Релаксация":
+        await relax(update, context)
+    elif text == "💬 Цитаты":
+        await quote(update, context)
+    elif text == "⏰ Напоминания":
+        await update.message.reply_text("Установи напоминание командой: /reminder <минуты> <текст>")
+    elif text == "🎯 Цели":
+        await update.message.reply_text("Функционал целей в разработке.")
+    elif text == "❓ FAQ":
+        await faq(update, context)
+    elif text == "🚨 Помощь":
+        await helpme(update, context)
+    else:
+        await mood_save(update, context)
+
+# --- Запуск приложения ---
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("setname", set_name))
+    app.add_handler(CommandHandler("diagnosis", start_diagnosis))
+    app.add_handler(CommandHandler("reminder", reminder))
+    app.add_handler(CommandHandler("faq", faq))
+    app.add_handler(CommandHandler("helpme", helpme))
+
+    app.add_handler(CallbackQueryHandler(button))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, menu_handler))
+
+    print("Бот запущен...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
