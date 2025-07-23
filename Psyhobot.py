@@ -53,12 +53,15 @@ def load_user_data():
     try:
         with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
-    except FileNotFoundError:
+    except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 def save_user_data(data):
-    with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=4)
+    try:
+        with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        logging.error(f"Ошибка при сохранении данных: {e}")
 
 # --- Команды ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,22 +117,33 @@ async def ask_question(update: Update, context: ContextTypes.DEFAULT_TYPE, user_
         ]
         markup = InlineKeyboardMarkup(keyboard)
         question = questions[question_number]
+
         if update.message:
             await update.message.reply_text(question, reply_markup=markup)
         elif update.callback_query:
             await update.callback_query.message.reply_text(question, reply_markup=markup)
+        else:
+            # fallback — отправляем напрямую в чат пользователя
+            await context.bot.send_message(chat_id=user_id, text=question, reply_markup=markup)
     else:
         await evaluate_answers(update, context, user_id)
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    _, uid, qn, *ans_parts = query.data.split("_")
+
+    # Разбор callback_data
+    data_parts = query.data.split("_", 3)
+    # data_parts = ["answer", user_id, question_number, answer_text]
+    if len(data_parts) < 4:
+        await query.message.reply_text("Ошибка данных.")
+        return
+
+    _, uid, qn, answer = data_parts
     user_id = int(uid)
     question_number = int(qn)
-    answer = "_".join(ans_parts)
 
-    user_answers[user_id].append(answer)
+    user_answers.setdefault(user_id, []).append(answer)
 
     if question_number + 1 < len(questions):
         await ask_question(update, context, user_id, question_number + 1)
@@ -137,7 +151,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await evaluate_answers(update, context, user_id)
 
 async def evaluate_answers(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int):
-    total = sum(scores_map[a] for a in user_answers[user_id])
+    total = sum(scores_map.get(a, 0) for a in user_answers.get(user_id, []))
     if total <= 5:
         result = "Ваше состояние в порядке."
     elif total <= 10:
@@ -149,19 +163,38 @@ async def evaluate_answers(update: Update, context: ContextTypes.DEFAULT_TYPE, u
 
     user_data = load_user_data()
     history = user_data.get(str(user_id), {}).get("history", [])
+
     history.append({"date": datetime.now().strftime("%Y-%m-%d %H:%M"), "score": total})
+    # сохраняем историю, сохраняя старые поля
     user_data[str(user_id)] = {"history": history, **user_data.get(str(user_id), {})}
     save_user_data(user_data)
 
     await generate_progress_graph(user_id, history)
 
-    await update.callback_query.message.edit_text(
-        f"Ваш результат: {total}\n\n{result}\n\nВот ваш прогресс:"
-    )
-    await context.bot.send_photo(chat_id=update.effective_chat.id, photo=open(f"progress_{user_id}.png", "rb"))
+    # Редактируем сообщение с вопросом, если есть callback_query
+    if update.callback_query:
+        await update.callback_query.message.edit_text(
+            f"Ваш результат: {total}\n\n{result}\n\nВот ваш прогресс:"
+        )
+    else:
+        # Если нет callback_query — отправляем сообщение в чат
+        await context.bot.send_message(chat_id=user_id,
+            text=f"Ваш результат: {total}\n\n{result}\n\nВот ваш прогресс:")
+
+    # Отправка графика
+    photo_path = f"progress_{user_id}.png"
+    if os.path.exists(photo_path):
+        await context.bot.send_photo(chat_id=user_id, photo=open(photo_path, "rb"))
+
+    # Очистка ответов после завершения диагностики
+    user_answers.pop(user_id, None)
 
 async def generate_progress_graph(user_id, history):
-    dates = [entry["date"] for entry in history]
+    if not history:
+        return
+
+    # Преобразуем даты в объекты datetime для matplotlib
+    dates = [datetime.strptime(entry["date"], "%Y-%m-%d %H:%M") for entry in history]
     scores = [entry["score"] for entry in history]
 
     plt.figure(figsize=(8, 6))
